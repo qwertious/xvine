@@ -1,0 +1,16 @@
+{
+  "name": "xvine",
+  "version": "0.3.0",
+  "private": true,
+  "description": "XIO xVine — a private offline Internet served on localhost",
+  "main": "server/main.js",
+  "engines": {
+    "node": ">=22.15"
+  },
+  "scripts": {
+    "start": "node server/main.js",
+    "dev": "node server/main.js --no-open",
+    "test:browser": "node test/browser-check.js"
+  },
+  "license": "GPL-3.0-or-later"
+}

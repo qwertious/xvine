@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Library · xVine</title>
+	<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+	<link rel="stylesheet" href="/static/xvine.css">
+</head>
+<body>
+	<header id="topbar"></header>
+	<main>
+		<div class="tabs" role="tablist">
+			<button role="tab" data-tab="installed" aria-selected="true">Installed</button>
+			<button role="tab" data-tab="catalog" aria-selected="false">Catalog</button>
+		</div>
+
+		<section id="tab-installed">
+			<div id="dlWrap" hidden>
+				<h2 class="sec-title" style="margin-top:0"><span class="p">&gt;</span> Downloads</h2>
+				<div id="downloads"></div>
+			</div>
+			<h2 class="sec-title" id="instTitle" style="margin-top:0"><span class="p">&gt;</span> Archives</h2>
+			<div id="installed"></div>
+			<h2 class="sec-title"><span class="p">&gt;</span> Add from disk</h2>
+			<p class="muted small">Drop <code>.zim</code> files into your library folder and restart xVine, or add a file
+				from anywhere on this computer by its full path.</p>
+			<div class="toolbar">
+				<input id="addPath" type="text" placeholder="C:\path\to\archive.zim" spellcheck="false" aria-label="Archive path">
+				<button class="btn" id="addBtn" type="button">Add</button>
+				<button class="btn ghost" id="folderBtn" type="button">Open library folder</button>
+			</div>
+			<div id="addMsg"></div>
+		</section>
+
+		<section id="tab-catalog" hidden>
+			<div class="filters" id="csource" role="group" aria-label="Catalog">
+				<button type="button" data-src="kiwix" aria-pressed="true">Kiwix library</button>
+				<button type="button" data-src="quest" aria-pressed="false">QUEST web archive</button>
+			</div>
+			<p class="muted small" style="margin-top:0" id="cAbout"></p>
+			<div class="toolbar">
+				<input id="cq" type="search" placeholder="Search the catalog" aria-label="Search the catalog">
+				<select id="clang" aria-label="Language"><option value="">Any language</option></select>
+				<select id="ccat" aria-label="Category"><option value="">Any category</option></select>
+			</div>
+			<div id="catNotice"></div>
+			<div id="catalog"></div>
+			<div class="pager" id="catPager"></div>
+		</section>
+	</main>
+	<script src="/static/common.js"></script>
+	<script>
+		(function () {
+			'use strict';
+			xv.topbar();
+			var $ = function (id) { return document.getElementById(id); };
+			var esc = xv.esc;
+			var installed = [];
+			var downloads = [];
+
+			/* ------------------------------------------------------------ tabs */
+			function showTab(name) {
+				document.querySelectorAll('[role=tab]').forEach(function (b) {
+					b.setAttribute('aria-selected', String(b.getAttribute('data-tab') === name));
+				});
+				$('tab-installed').hidden = name !== 'installed';
+				$('tab-catalog').hidden = name !== 'catalog';
+				if (name === 'catalog') loadCatalogOnce();
+				history.replaceState(null, '', name === 'catalog' ? '#catalog' : location.pathname);
+			}
+			document.querySelector('.tabs').addEventListener('click', function (e) {
+				var b = e.target.closest('[role=tab]');
+				if (b) showTab(b.getAttribute('data-tab'));
+			});
+
+			/* ------------------------------------------------------- installed */
+			function indexLine(ix) {
+				if (ix.state === 'builtin') return '<span class="state-done">Searchable (built-in index)</span>';
+				if (ix.state === 'done') return '<span class="state-done">Indexed</span>';
+				if (ix.state === 'error') return '<span class="state-error">Index error: ' + esc(ix.error || '') + '</span>';
+				if (ix.phase === 'scanning') return 'Scanning articles… ' + xv.fmtNum(ix.done) + ' / ' + xv.fmtNum(ix.total);
+				if (ix.phase === 'indexing' || ix.state === 'indexing') {
+					return 'Indexing for full-text search… ' + xv.fmtNum(ix.done) + ' / ' + xv.fmtNum(ix.total);
+				}
+				return 'Waiting to index';
+			}
+
+			function renderInstalled() {
+				$('installed').innerHTML = installed.length ? installed.map(function (b) {
+					var ix = b.index;
+					var pct = ix.total ? Math.round((ix.done / ix.total) * 100) : 0;
+					var busy = ix.state !== 'done' && ix.state !== 'error' && ix.state !== 'builtin';
+					var ic = b.hasIcon ? '<img class="book-icon" src="' + xv.icon(b.id) + '" alt="">' : '<span class="book-icon ph">' + esc((b.title || '?').charAt(0)) + '</span>';
+					return '<div class="row" data-id="' + esc(b.id) + '">' + ic +
+						'<div class="grow"><div class="rt">' + esc(b.title) + '</div>' +
+						(b.description ? '<div class="rd">' + esc(b.description) + '</div>' : '') +
+						'<div class="rm"><span>' + (b.articleCount ? xv.fmtNum(b.articleCount) + ' articles' : '') + '</span>' +
+						'<span>' + xv.fmtBytes(b.size) + '</span>' + (b.flavour ? '<span class="chip">' + esc(b.flavour) + '</span>' : '') +
+						(b.language ? '<span>' + esc(b.language) + '</span>' : '') + (b.date ? '<span>' + esc(b.date) + '</span>' : '') +
+						'<span>' + indexLine(ix) + '</span></div>' +
+						(busy && ix.total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') +
+						'</div><div class="ra">' +
+						(b.mainPath ? '<a class="btn" href="' + xv.viewUrl(b.id, b.mainPath) + '">Open</a>' : '') +
+						(ix.state === 'builtin' ? '' : '<button class="btn ghost" data-act="reindex">Re-index</button>') +
+						'<button class="btn ghost danger" data-act="remove">Remove</button></div></div>';
+				}).join('') : '<div class="empty"><p>No archives yet.</p><button class="btn" type="button" id="goCat">Browse the catalog</button></div>';
+				var g = $('goCat');
+				if (g) g.onclick = function () { showTab('catalog'); };
+			}
+
+			$('installed').addEventListener('click', function (e) {
+				var btn = e.target.closest('button[data-act]');
+				if (!btn) return;
+				var id = btn.closest('.row').getAttribute('data-id');
+				var b = installed.find(function (x) { return x.id === id; });
+				var act = btn.getAttribute('data-act');
+				if (act === 'reindex') {
+					xv.post('books/reindex', { id: id }).then(refresh);
+				} else if (act === 'remove') {
+					var del = b.inLibraryDir
+						? confirm('Remove "' + b.title + '" and delete its file (' + xv.fmtBytes(b.size) + ') from your library folder?\n\nThis cannot be undone.')
+						: false;
+					if (b.inLibraryDir && !del) return;
+					if (!b.inLibraryDir && !confirm('Remove "' + b.title + '" from xVine? The file itself stays where it is:\n' + b.file)) return;
+					xv.post('books/remove', { id: id, deleteFile: !!del }).then(refresh).catch(function (err) { alert(err.message); });
+				}
+			});
+
+			/* ------------------------------------------------------- downloads */
+			function renderDownloads() {
+				var live = downloads.filter(function (d) { return d.state !== 'done'; });
+				$('dlWrap').hidden = !live.length;
+				$('instTitle').style.marginTop = live.length ? '' : '0';
+				$('downloads').innerHTML = live.map(function (d) {
+					var pct = d.size ? Math.min(100, (d.received / d.size) * 100) : 0;
+					var status = {
+						queued: 'Starting…',
+						downloading: xv.fmtBytes(d.received) + ' of ' + xv.fmtBytes(d.size) + (d.speed ? ' · ' + xv.fmtBytes(d.speed) + '/s' : '') +
+							(d.speed && d.size ? ' · ' + eta((d.size - d.received) / d.speed) + ' left' : ''),
+						paused: 'Paused at ' + xv.fmtBytes(d.received) + ' of ' + xv.fmtBytes(d.size),
+						verifying: 'Verifying checksum…',
+						error: '<span class="state-error">' + esc(d.error || 'Failed') + '</span>',
+					}[d.state] || esc(d.state);
+					var acts = d.state === 'downloading' || d.state === 'queued'
+						? '<button class="btn ghost" data-dl="pause">Pause</button>'
+						: d.state === 'paused' || d.state === 'error' ? '<button class="btn" data-dl="resume">Resume</button>' : '';
+					return '<div class="row" data-id="' + esc(d.id) + '"><div class="grow"><div class="rt">' + esc(d.title) +
+						(d.flavour ? ' <span class="chip">' + esc(d.flavour) + '</span>' : '') + '</div>' +
+						'<div class="rm"><span>' + status + '</span></div><div class="bar"><i style="width:' + pct.toFixed(1) + '%"></i></div></div>' +
+						'<div class="ra">' + acts + '<button class="btn ghost danger" data-dl="cancel">Cancel</button></div></div>';
+				}).join('');
+			}
+
+			function eta(s) {
+				if (!isFinite(s) || s < 0) return '?';
+				if (s < 90) return Math.round(s) + 's';
+				if (s < 5400) return Math.round(s / 60) + ' min';
+				return (s / 3600).toFixed(1) + ' h';
+			}
+
+			$('downloads').addEventListener('click', function (e) {
+				var btn = e.target.closest('button[data-dl]');
+				if (!btn) return;
+				var id = btn.closest('.row').getAttribute('data-id');
+				var act = btn.getAttribute('data-dl');
+				if (act === 'cancel' && !confirm('Cancel this download and discard what has been downloaded so far?')) return;
+				xv.post('downloads/' + id + '/' + act).then(refresh);
+			});
+
+			/* ------------------------------------------------------- add by path */
+			if ($('addBtn')) $('addBtn').addEventListener('click', function () {
+				var p = $('addPath').value.trim().replace(/^"|"$/g, '');
+				if (!p) return;
+				$('addMsg').innerHTML = '';
+				xv.post('books/add', { path: p }).then(function (r) {
+					$('addPath').value = '';
+					$('addMsg').innerHTML = '<div class="notice">Added ' + esc(r.book.title) + '.</div>';
+					refresh();
+				}).catch(function (err) {
+					$('addMsg').innerHTML = '<div class="notice bad">' + esc(err.message) + '</div>';
+				});
+			});
+			// Android app: no file paths, so import through the system file picker
+			// (the app copies the archive into the library and adds it).
+			if (/xVineAndroid/.test(navigator.userAgent)) {
+				var box = $('addPath').parentNode;
+				box.innerHTML = '<label class="btn" for="zimPick">Import a .zim from this device</label>' +
+					'<input id="zimPick" type="file" accept=".zim,application/octet-stream" hidden>';
+				box.previousElementSibling.textContent = 'Already have archives (for example from Kiwix)? Import them here. ' +
+					'They are copied into the app’s storage; a notification shows the copy’s progress.';
+			}
+			if ($('folderBtn')) $('folderBtn').addEventListener('click', function () {
+				xv.post('open-folder').catch(function (err) {
+					$('addMsg').innerHTML = '<div class="notice warn">' + esc(err.message) + '</div>';
+				});
+			});
+
+			/* --------------------------------------------------------- polling */
+			var timer = null;
+			function refresh() {
+				clearTimeout(timer);
+				return Promise.all([xv.api('books'), xv.api('downloads')]).then(function (r) {
+					installed = r[0].books.sort(function (a, b) { return a.title.localeCompare(b.title); });
+					downloads = r[1].downloads;
+					renderInstalled();
+					renderDownloads();
+					markInstalled();
+					var busy = installed.some(function (b) { return ['done', 'error', 'builtin'].indexOf(b.index.state) < 0; }) ||
+						downloads.some(function (d) { return d.state === 'downloading' || d.state === 'verifying' || d.state === 'queued'; });
+					timer = setTimeout(refresh, busy ? 1000 : 5000);
+				}).catch(function () { timer = setTimeout(refresh, 5000); });
+			}
+
+			/* --------------------------------------------------------- catalog */
+			var cat = { start: 0, count: 30, entries: [], loaded: false, source: 'kiwix', seq: 0 };
+
+			function loadCatalogOnce() {
+				if (cat.loaded) return;
+				cat.loaded = true;
+				xv.api('catalog/facets').then(function (f) {
+					$('clang').innerHTML = '<option value="">Any language</option>' + f.languages.map(function (l) {
+						return '<option value="' + esc(l.code) + '">' + esc(l.name) + ' (' + l.count + ')</option>';
+					}).join('');
+					$('ccat').innerHTML = '<option value="">Any category</option>' + f.categories.map(function (c) {
+						return '<option value="' + esc(c) + '">' + esc(c) + '</option>';
+					}).join('');
+					var nav = (navigator.language || 'en').slice(0, 2);
+					var guess = { en: 'eng', fr: 'fra', de: 'deu', es: 'spa', it: 'ita', pt: 'por', ru: 'rus', zh: 'zho', ja: 'jpn', ar: 'ara', nl: 'nld', pl: 'pol' }[nav];
+					if (guess && f.languages.some(function (l) { return l.code === guess; })) $('clang').value = guess;
+					if (cat.source === 'kiwix') loadCatalog();
+				}).catch(function () {
+					if (cat.source === 'kiwix') loadCatalog();
+				});
+			}
+
+			var ABOUT = {
+				kiwix: 'Archives from the Kiwix catalog: Wikipedia, Wiktionary, Stack Exchange, Project Gutenberg, WikiHow, ' +
+					'iFixit, TED, Khan Academy and more. Downloads are checked against their published SHA-256 before they join your vine.',
+				quest: 'Pages collected by QUEST, XIO’s own independent web crawler, packed as text snapshots with a built-in ' +
+					'search index. No images, scripts or trackers: just the words of each page, its address and when it was archived.',
+			};
+
+			function setSource(src) {
+				cat.source = src;
+				cat.start = 0;
+				document.querySelectorAll('#csource button').forEach(function (b) {
+					b.setAttribute('aria-pressed', String(b.getAttribute('data-src') === src));
+				});
+				$('cAbout').textContent = ABOUT[src];
+				$('clang').hidden = $('ccat').hidden = src === 'quest';
+				loadCatalog();
+			}
+			$('csource').addEventListener('click', function (e) {
+				var b = e.target.closest('button[data-src]');
+				if (b && b.getAttribute('data-src') !== cat.source) setSource(b.getAttribute('data-src'));
+			});
+			$('cAbout').textContent = ABOUT.kiwix;
+
+			function loadCatalog() {
+				var p = cat.source === 'quest'
+					? new URLSearchParams({ source: 'quest', q: $('cq').value.trim() })
+					: new URLSearchParams({ q: $('cq').value.trim(), lang: $('clang').value, category: $('ccat').value, start: String(cat.start), count: String(cat.count) });
+				$('catalog').innerHTML = '<p class="muted">Loading…</p>';
+				var my = ++cat.seq; // a slower, older request must not overwrite a newer one
+				xv.api('catalog?' + p).then(function (r) {
+					if (my !== cat.seq) return;
+					cat.entries = r.entries;
+					cat.total = r.total;
+					$('catNotice').innerHTML = r.cached ? '<div class="notice warn">Offline — showing the catalog as it was last seen.</div>' : '';
+					renderCatalog();
+				}).catch(function (err) {
+					$('catalog').innerHTML = '<div class="notice bad">' + esc(err.message) + '</div>';
+				});
+			}
+
+			function installedState(e) {
+				var dl = downloads.find(function (d) { return d.file === e.file && d.state !== 'done'; });
+				if (dl) return 'downloading';
+				var b = installed.find(function (x) { return x.name === e.name && (x.flavour || '') === (e.flavour || ''); });
+				if (!b) return null;
+				return (b.date || '') < e.date ? 'update' : 'installed';
+			}
+
+			function renderCatalog() {
+				lastStates = cat.entries.map(installedState).join(',');
+				$('catalog').innerHTML = cat.entries.length ? cat.entries.map(function (e, i) {
+					var st = installedState(e);
+					var btn = st === 'installed' ? '<span class="chip state-done">Installed</span>'
+						: st === 'downloading' ? '<span class="chip">Downloading</span>'
+						: '<button class="btn" data-i="' + i + '">' + (st === 'update' ? 'Update' : 'Download') + ' · ' + xv.fmtBytes(e.size) + '</button>';
+					return '<div class="row">' + (e.icon ? '<img class="book-icon" src="' + esc(e.icon) + '" alt="" loading="lazy">' : '<span class="book-icon ph"></span>') +
+						'<div class="grow"><div class="rt">' + esc(e.title) + (e.flavour ? ' <span class="chip">' + esc(e.flavour) + '</span>' : '') + '</div>' +
+						'<div class="rd">' + esc(e.summary) + '</div><div class="rm">' +
+						(e.articleCount ? '<span>' + xv.fmtNum(e.articleCount) + (e.source === 'quest' ? ' pages' : ' articles') + '</span>' : '') +
+						(e.siteCount ? '<span>' + xv.fmtNum(e.siteCount) + ' sites</span>' : '') +
+						'<span>' + (e.pictures ? 'with images' : 'text only') + '</span><span>' + esc(e.language) + '</span>' +
+						'<span>' + esc(e.category) + '</span><span>' + esc(e.date) + '</span></div></div>' +
+						'<div class="ra">' + btn + '</div></div>';
+				}).join('') : '<p class="muted">' + (cat.source === 'quest' && !$('cq').value.trim()
+					? 'No QUEST packs have been published yet.' : 'Nothing matches.') + '</p>';
+				$('catPager').innerHTML =
+					(cat.start > 0 ? '<button class="btn" id="cPrev">← Previous</button>' : '<span></span>') +
+					'<span class="muted small">' + (cat.total ? (cat.start + 1) + '–' + Math.min(cat.total, cat.start + cat.count) + ' of ' + xv.fmtNum(cat.total) : '') + '</span>' +
+					(cat.start + cat.count < cat.total ? '<button class="btn" id="cNext">Next →</button>' : '<span></span>');
+				if ($('cPrev')) $('cPrev').onclick = function () { cat.start = Math.max(0, cat.start - cat.count); loadCatalog(); scrollTo(0, 0); };
+				if ($('cNext')) $('cNext').onclick = function () { cat.start += cat.count; loadCatalog(); scrollTo(0, 0); };
+			}
+
+			// Re-render only when an entry's installed/downloading state changed, so
+			// the periodic refresh never swaps a button out from under a click.
+			var lastStates = '';
+			function markInstalled() {
+				if (!cat.entries.length || $('tab-catalog').hidden) return;
+				var states = cat.entries.map(installedState).join(',');
+				if (states !== lastStates) renderCatalog();
+			}
+
+			$('catalog').addEventListener('click', function (ev) {
+				var btn = ev.target.closest('button[data-i]');
+				if (!btn) return;
+				var e = cat.entries[+btn.getAttribute('data-i')];
+				if (e.size > 2 * 1024 * 1024 * 1024 && !confirm('Download "' + e.title + '" (' + xv.fmtBytes(e.size) + ')?\n\nIt will be saved to your library folder.')) return;
+				btn.disabled = true;
+				xv.post('downloads', { entry: e }).then(function () {
+					showTab('installed');
+					refresh();
+				}).catch(function (err) {
+					btn.disabled = false;
+					alert(err.message);
+				});
+			});
+
+			var deb = null;
+			$('cq').addEventListener('input', function () {
+				clearTimeout(deb);
+				deb = setTimeout(function () { cat.start = 0; loadCatalog(); }, 300);
+			});
+			$('clang').addEventListener('change', function () { cat.start = 0; loadCatalog(); });
+			$('ccat').addEventListener('change', function () { cat.start = 0; loadCatalog(); });
+
+			refresh();
+			if (location.hash === '#catalog') showTab('catalog');
+		})();
+	</script>
+</body>
+</html>

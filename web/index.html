@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>xVine</title>
+	<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+	<link rel="stylesheet" href="/static/xvine.css">
+</head>
+<body>
+	<header id="topbar"></header>
+	<main>
+		<section class="home">
+			<div class="home-head">
+				<div id="bigMark"></div>
+				<h1>XVINE</h1>
+				<p class="kicker">The offline Internet · by XIO</p>
+			</div>
+			<div id="bigSearch"></div>
+			<div class="home-actions">
+				<button class="btn ghost" id="random" type="button">Random article</button>
+				<a class="btn ghost" href="/library">Add archives</a>
+			</div>
+
+			<h2 class="sec-title"><span class="p">&gt;</span> Your vine</h2>
+			<div id="shelf"></div>
+		</section>
+	</main>
+	<script src="/static/common.js"></script>
+	<script>
+		(function () {
+			'use strict';
+			xv.topbar({ search: false });
+			document.getElementById('bigMark').innerHTML = xv.MARK;
+			var holder = document.getElementById('bigSearch');
+			holder.innerHTML = xv.searchBoxHtml(true, '');
+			xv.mountSearch(holder.firstChild);
+
+			document.getElementById('random').addEventListener('click', function () {
+				xv.api('random').then(function (r) {
+					location.href = xv.viewUrl(r.source, r.path);
+				}).catch(function () {});
+			});
+
+			xv.api('books').then(function (j) {
+				var shelf = document.getElementById('shelf');
+				if (!j.books.length) {
+					shelf.innerHTML =
+						'<div class="empty"><p>Your vine is empty. Add Wikipedia, Stack Exchange, Project Gutenberg and more ' +
+						'from the library, or drop <code>.zim</code> files into your library folder.</p>' +
+						'<a class="btn" href="/library#catalog">Browse the catalog</a></div>';
+					return;
+				}
+				j.books.sort(function (a, b) { return (b.articleCount || 0) - (a.articleCount || 0); });
+				shelf.className = 'shelf';
+				shelf.innerHTML = j.books.map(function (b) {
+					var ic = b.hasIcon
+						? '<img class="book-icon" src="' + xv.icon(b.id) + '" alt="">'
+						: '<span class="book-icon ph">' + xv.esc((b.title || '?').charAt(0)) + '</span>';
+					var href = b.mainPath ? xv.viewUrl(b.id, b.mainPath) : '/search?sources=' + encodeURIComponent(b.id);
+					return '<a class="book" href="' + href + '">' + ic +
+						'<div style="min-width:0"><div class="bt">' + xv.esc(b.title) + '</div>' +
+						'<div class="bm">' + (b.articleCount ? xv.fmtNum(b.articleCount) + ' articles · ' : '') +
+						xv.fmtBytes(b.size) + (b.flavour ? ' · ' + xv.esc(b.flavour) : '') + '</div></div></a>';
+				}).join('');
+			});
+		})();
+	</script>
+</body>
+</html>

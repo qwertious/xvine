@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Search · xVine</title>
+	<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+	<link rel="stylesheet" href="/static/xvine.css">
+</head>
+<body>
+	<header id="topbar"></header>
+	<main>
+		<div class="results-head" id="head"></div>
+		<div class="filters" id="filters"></div>
+		<div class="layout">
+			<div>
+				<div id="best"></div>
+				<div id="notice"></div>
+				<div id="results"></div>
+				<div class="pager" id="pager"></div>
+			</div>
+			<aside class="side" id="side"></aside>
+		</div>
+	</main>
+	<script src="/static/common.js"></script>
+	<script>
+		(function () {
+			'use strict';
+			var params = new URLSearchParams(location.search);
+			var q = (params.get('q') || '').trim();
+			var page = Math.max(0, parseInt(params.get('page') || '0', 10) || 0);
+			var sources = (params.get('sources') || '').split(',').filter(Boolean);
+			xv.topbar({ query: q });
+			document.title = (q ? q + ' · ' : '') + 'xVine';
+
+			var $ = function (id) { return document.getElementById(id); };
+			var books = {};
+
+			function link(extra) {
+				var p = new URLSearchParams({ q: q });
+				var s = 'sources' in extra ? extra.sources : sources;
+				if (s.length) p.set('sources', s.join(','));
+				if (extra.page) p.set('page', String(extra.page));
+				return '/search?' + p.toString();
+			}
+
+			function srcLine(r) {
+				var b = books[r.source];
+				var ic = b && b.hasIcon ? '<img src="' + xv.icon(r.source) + '" alt="">' : '';
+				return '<div class="src">' + ic + '<span>' + xv.esc(r.sourceTitle) + '</span><span>›</span><span>' +
+					xv.esc(r.path.replace(/_/g, ' ')) + '</span></div>';
+			}
+
+			xv.api('books').then(function (j) {
+				j.books.forEach(function (b) { books[b.id] = b; });
+				if (j.books.length > 1) {
+					$('filters').innerHTML =
+						'<button type="button" aria-pressed="' + (!sources.length) + '" data-s="">All sources</button>' +
+						j.books.map(function (b) {
+							return '<button type="button" aria-pressed="' + (sources.indexOf(b.id) >= 0) + '" data-s="' +
+								xv.esc(b.id) + '">' + xv.esc(b.title) + '</button>';
+						}).join('');
+					$('filters').addEventListener('click', function (e) {
+						var btn = e.target.closest('button');
+						if (!btn) return;
+						var s = btn.getAttribute('data-s');
+						location.href = link({ sources: s ? [s] : [], page: 0 });
+					});
+				}
+				if (!q) {
+					$('head').textContent = 'Type something to search ' + j.books.length + ' archive' + (j.books.length === 1 ? '' : 's') + '.';
+					return;
+				}
+				run();
+			});
+
+			function run() {
+				var t0 = performance.now();
+				var url = 'search?q=' + encodeURIComponent(q) + (sources.length ? '&sources=' + encodeURIComponent(sources.join(',')) : '') + '&page=' + page;
+				xv.api(url).then(function (r) {
+					var ms = Math.round(performance.now() - t0);
+					var n = r.best.length + r.results.length;
+					var count = r.total > n ? 'About ' + xv.fmtNum(r.total) + ' results' + (page ? ' · page ' + (page + 1) : '')
+						: n ? (r.more ? 'Page ' + (page + 1) : n + ' result' + (n === 1 ? '' : 's')) : 'No results';
+					$('head').innerHTML = '<span>' + count +
+						' for <b style="color:var(--fg)">' + xv.esc(q) + '</b></span><span>' + ms + ' ms</span>';
+
+					$('best').innerHTML = r.best.map(function (b) {
+						return '<article class="best"><div class="label">Best match</div>' +
+							'<h2><a href="' + xv.viewUrl(b.source, b.path) + '">' + xv.esc(b.title) + '</a></h2>' +
+							'<p>' + xv.esc(b.summary) + '</p><div class="src">' + xv.esc(b.sourceTitle) + '</div></article>';
+					}).join('');
+
+					var notes = [];
+					if (r.missing && r.missing.length) notes.push('<div class="notice">Not found anywhere: ' + r.missing.map(function (w) { return '<s>' + xv.esc(w) + '</s>'; }).join(' ') + '</div>');
+					if (r.loose) notes.push('<div class="notice">No page contains every word; showing the closest matches.</div>');
+					if (r.partial) notes.push('<div class="notice warn">Some archives are still being indexed. Title matches work already; full-text results will fill in as indexing finishes (see the <a href="/library" style="text-decoration:underline">library</a>).</div>');
+					$('notice').innerHTML = notes.join('');
+
+					$('results').innerHTML = r.results.map(function (x) {
+						return '<article class="result">' + srcLine(x) +
+							'<h3><a href="' + xv.viewUrl(x.source, x.path) + '">' + xv.esc(x.title) + '</a></h3>' +
+							(x.summary ? '<p>' + xv.esc(x.summary) + '</p>' : '') + '</article>';
+					}).join('') || (r.best.length ? '' : '<div class="empty"><p>Nothing in your vine matches that.</p><a class="btn" href="/library#catalog">Find more archives</a></div>');
+
+					$('pager').innerHTML =
+						(page > 0 ? '<a class="btn" href="' + link({ page: page - 1 }) + '">← Previous</a>' : '<span></span>') +
+						(r.more ? '<a class="btn" href="' + link({ page: page + 1 }) + '">Next →</a>' : '');
+
+					if (r.titles && r.titles.length) {
+						$('side').innerHTML = '<h4>Titles</h4><ul>' + r.titles.map(function (s) {
+							return '<li><a href="' + xv.viewUrl(s.source, s.path) + '">' + xv.esc(s.title) + '</a>' +
+								(s.target ? ' <span class="r">→ ' + xv.esc(s.target) + '</span>' : '') +
+								'<div class="r">' + xv.esc(s.sourceTitle) + '</div></li>';
+						}).join('') + '</ul>';
+					}
+				}).catch(function (e) {
+					$('results').innerHTML = '<div class="notice bad">Search failed: ' + xv.esc(e.message) + '</div>';
+				});
+			}
+		})();
+	</script>
+</body>
+</html>

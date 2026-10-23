@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>xVine</title>
+	<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+	<link rel="stylesheet" href="/static/xvine.css">
+</head>
+<body class="viewer">
+	<header id="topbar"></header>
+	<div class="crumb">
+		<img id="cIcon" width="16" height="16" alt="" hidden>
+		<a id="cSource" href="#"></a>
+		<span>›</span>
+		<span class="ct" id="cTitle"></span>
+		<span class="sp"></span>
+		<a id="cSearch" href="#">Search this topic</a>
+	</div>
+	<iframe class="frame" id="frame" title="Article"
+		sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+	<div class="toast" id="toast" hidden>
+		<span>External link — this leaves the offline vine:</span>
+		<span class="u" id="toastUrl"></span>
+		<a class="btn" id="toastGo" href="#" target="_blank" rel="noopener noreferrer">Open online</a>
+		<button class="btn ghost" id="toastX" type="button">Dismiss</button>
+	</div>
+	<script src="/static/common.js"></script>
+	<script>
+		(function () {
+			'use strict';
+			xv.topbar({ extraClass: 'viewbar' });
+			var $ = function (id) { return document.getElementById(id); };
+			var frame = $('frame');
+			var books = {};
+
+			// /view/<source>/<path…>  →  /content/<source>/<path…>
+			var m = /^\/view\/([^/]+)\/?(.*)$/.exec(location.pathname);
+			if (!m) { location.replace('/'); return; }
+			var source = decodeURIComponent(m[1]);
+			// allow-same-origin above keeps the frame's own (127.0.0.1) origin, which is
+			// already foreign to this page; the sandbox just stops top-navigation.
+			frame.src = xv.CONTENT_ORIGIN + '/content/' + m[1] + '/' + m[2] + location.search + location.hash;
+
+			function crumb(pathname, title) {
+				var b = books[source];
+				$('cSource').textContent = b ? b.title : source;
+				$('cSource').href = b && b.mainPath ? xv.viewUrl(source, b.mainPath) : '/';
+				if (b && b.hasIcon) { $('cIcon').src = xv.icon(source); $('cIcon').hidden = false; }
+				$('cTitle').textContent = title || '';
+				$('cSearch').href = '/search?q=' + encodeURIComponent(title || '');
+				document.title = (title ? title + ' · ' : '') + 'xVine';
+			}
+
+			xv.api('books').then(function (j) {
+				j.books.forEach(function (b) { books[b.id] = b; });
+				crumb('', $('cTitle').textContent);
+			});
+
+			window.addEventListener('message', function (e) {
+				if (e.source !== frame.contentWindow || e.origin !== xv.CONTENT_ORIGIN || !e.data || typeof e.data !== 'object') return;
+				var d = e.data;
+				if (d.type === 'xvine:nav' && typeof d.path === 'string') {
+					var cm = /^\/content\/([^/]+)\/?(.*)$/.exec(d.path);
+					if (!cm) return;
+					source = decodeURIComponent(cm[1]);
+					var viewPath = '/view/' + cm[1] + '/' + cm[2] + (d.hash || '');
+					if (viewPath !== location.pathname + location.hash) history.replaceState(null, '', viewPath);
+					crumb(d.path, String(d.title || ''));
+				} else if (d.type === 'xvine:external' && /^https?:\/\//i.test(d.url || '')) {
+					$('toastUrl').textContent = d.url;
+					$('toastGo').href = d.url;
+					$('toast').hidden = false;
+				} else if (d.type === 'xvine:go' && typeof d.url === 'string' && d.url.charAt(0) === '/' && d.url.charAt(1) !== '/') {
+					location.href = d.url;
+				}
+			});
+			$('toastX').addEventListener('click', function () { $('toast').hidden = true; });
+			$('toastGo').addEventListener('click', function () { $('toast').hidden = true; });
+		})();
+	</script>
+</body>
+</html>

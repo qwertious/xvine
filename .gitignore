@@ -1,0 +1,12 @@
+node_modules/
+__pycache__/
+*.pyc
+.claude/
+.DS_Store
+Thumbs.db
+
+# Release builds and the local Android build kit
+dist/
+AndroidSdk/
+*.apk
+*.keystore
